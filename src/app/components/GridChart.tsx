@@ -309,6 +309,29 @@ export function GridChart({ volatilityMultiplier = 1.0 }: GridChartProps) {
     }
     ctx.restore();
 
+    // Local time label above the "now" line (drawn on top of locked cells)
+    const localTimeStr = new Date(now).toLocaleTimeString(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
+    ctx.font = "10px system-ui, sans-serif";
+    const timeW = ctx.measureText(localTimeStr).width;
+    const timePad = 6;
+    const timeBoxW = timeW + timePad * 2;
+    const timeBoxH = 18;
+    const timeY = 4;
+    ctx.fillStyle = "#0d0d0f";
+    ctx.strokeStyle = "rgba(34, 197, 94, 0.5)";
+    ctx.lineWidth = 1;
+    ctx.fillRect(centerX - timeBoxW / 2, timeY, timeBoxW, timeBoxH);
+    ctx.strokeRect(centerX - timeBoxW / 2, timeY, timeBoxW, timeBoxH);
+    ctx.fillStyle = "rgba(34, 197, 94, 0.95)";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(localTimeStr, centerX, timeY + timeBoxH / 2);
+
     if (history.length < 2) {
       frameRef.current = requestAnimationFrame(draw);
       return;
