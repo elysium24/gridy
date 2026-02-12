@@ -6,7 +6,7 @@ import { VolatilityControl } from "./components/VolatilityControl";
 import { useState } from "react";
 
 export default function Home() {
-  const [volatilityMultiplier, setVolatilityMultiplier] = useState(1.0);
+  const [volatilityMultiplier, setVolatilityMultiplier] = useState(0.5);
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[var(--background)]">

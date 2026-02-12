@@ -83,11 +83,11 @@ function findEndIndex(history: PriceTimePoint[], t: number): number {
 }
 
 interface GridChartProps {
-  /** Multiplier applied to historical sigma: Final_Sigma = sigma * volatilityMultiplier. Default 1.0. */
+  /** Multiplier applied to historical sigma: Final_Sigma = sigma * volatilityMultiplier. Default 0.5. */
   volatilityMultiplier?: number;
 }
 
-export function GridChart({ volatilityMultiplier = 1.0 }: GridChartProps) {
+export function GridChart({ volatilityMultiplier = 0.5 }: GridChartProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dimensionsRef = useRef({ width: 0, height: 0 });
   const lockImageRef = useRef<HTMLImageElement | null>(null);
