@@ -1,6 +1,6 @@
  "use client";
 
-import { useBinanceWebSocket } from "@/hooks/useBinanceWebSocket";
+import { useBinanceWebSocket, type PriceTimePoint } from "@/hooks/useBinanceWebSocket";
 import { useBalance } from "@/contexts/BalanceContext";
 import { AnimatePresence, motion, animate } from "framer-motion";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -11,12 +11,236 @@ const ROUND_DURATION_MS = 10_000;
 const MULTIPLIER = 1.9;
 const MAX_STREAK = 10;
 const MAX_PAYOUT = 100_000; // soft cap for a single streak
+const STREAK_STORAGE_KEY = "gridy:chain-reaction-streak";
 
 // Button accent colors
 const UP_COLOR = "#3B82F6"; // blue
 const DOWN_COLOR = "#F97316"; // orange
 const BG_NEAR_BLACK = "#0B0E11";
 const BORDER_COLOR = "#1E2329";
+
+const MINI_CHART_WINDOW_MS = 20_000; // last 20 seconds
+const MINI_CHART_UPDATE_MS = 50; // redraw every 0.05s for smooth motion
+const MINI_CHART_SAMPLE_MS = 50; // sample every 50ms
+const MINI_CHART_WIDTH = 360;
+const MINI_CHART_HEIGHT = 96;
+
+/** Interpolate price at time t between surrounding points (smooth left edge as window moves). */
+function interpolatePrice(slice: PriceTimePoint[], t: number): number {
+  if (slice.length === 0) return 0;
+  if (slice.length === 1 || t <= slice[0].time) return slice[0].price;
+  if (t >= slice[slice.length - 1].time) return slice[slice.length - 1].price;
+  let i = 0;
+  while (i + 1 < slice.length && slice[i + 1].time < t) i++;
+  const a = slice[i];
+  const b = slice[i + 1];
+  const frac = (t - a.time) / (b.time - a.time);
+  return a.price + frac * (b.price - a.price);
+}
+
+/** Dense series with linear interpolation so the chart doesn't jump when the window slides. */
+function buildSmoothedSeries(
+  slice: PriceTimePoint[],
+  fromTime: number,
+  lastTime: number
+): { time: number; price: number }[] {
+  if (slice.length === 0) return [];
+  const out: { time: number; price: number }[] = [];
+  for (let t = fromTime; t <= lastTime; t += MINI_CHART_SAMPLE_MS) {
+    out.push({ time: t, price: interpolatePrice(slice, t) });
+  }
+  if (out.length > 0 && out[out.length - 1].time < lastTime) {
+    out.push({ time: lastTime, price: interpolatePrice(slice, lastTime) });
+  }
+  return out;
+}
+
+function MiniChartPreview({
+  priceTimeHistory,
+  entryPrice,
+  entryTime,
+  result,
+  currentPrice,
+  direction,
+  roundActive,
+}: {
+  priceTimeHistory: PriceTimePoint[];
+  entryPrice: number | null;
+  entryTime: number | null;
+  result: "win" | "lose" | "push" | null;
+  currentPrice: number | null;
+  direction: Direction | null;
+  roundActive: boolean;
+}) {
+  const [tick, setTick] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setTick(Date.now()), MINI_CHART_UPDATE_MS);
+    return () => clearInterval(id);
+  }, []);
+
+  const slice = useMemo(() => {
+    if (priceTimeHistory.length === 0) return [];
+    const fromTime = tick - MINI_CHART_WINDOW_MS;
+    return priceTimeHistory.filter((pt) => pt.time >= fromTime);
+  }, [priceTimeHistory, tick]);
+
+  const smoothed = useMemo(() => {
+    if (slice.length === 0) return [];
+    const fromTime = tick - MINI_CHART_WINDOW_MS;
+    return buildSmoothedSeries(slice, fromTime, tick);
+  }, [slice, tick]);
+
+  const { pathD, marker, lineColor } = useMemo(() => {
+    if (smoothed.length < 2) {
+      return { pathD: "", marker: null as { x: number; y: number } | null, lineColor: "#71717a" };
+    }
+    const firstTime = smoothed[0].time;
+    const lastTime = smoothed[smoothed.length - 1].time;
+    const timeRange = lastTime - firstTime || 1;
+
+    const prices = smoothed.map((p) => p.price);
+    const minP = Math.min(...prices);
+    const maxP = Math.max(...prices);
+    const range = maxP - minP || 1;
+    const pad = range * 0.1;
+    const yMin = minP - pad;
+    const yMax = maxP + pad;
+    const yRange = yMax - yMin;
+
+    const w = MINI_CHART_WIDTH;
+    const h = MINI_CHART_HEIGHT;
+
+    const xScale = (t: number) => ((t - firstTime) / timeRange) * w;
+    const yScale = (price: number) => h - ((price - yMin) / yRange) * h;
+
+    const d = smoothed
+      .map((pt, i) => `${i === 0 ? "M" : "L"} ${xScale(pt.time)} ${yScale(pt.price)}`)
+      .join(" ");
+
+    let markerPoint: { x: number; y: number } | null = null;
+    if (roundActive && entryPrice != null && entryTime != null && slice.length > 0) {
+      if (entryTime >= firstTime && entryTime <= lastTime) {
+        markerPoint = { x: xScale(entryTime), y: yScale(entryPrice) };
+      } else if (entryTime <= firstTime) {
+        markerPoint = { x: 0, y: yScale(entryPrice) };
+      } else {
+        markerPoint = { x: w, y: yScale(entryPrice) };
+      }
+    } else if (roundActive && entryPrice != null && slice.length > 0) {
+      markerPoint = { x: 0, y: yScale(entryPrice) };
+    }
+
+    const lineColor =
+      result === "win" ? "#34d399" : result === "lose" ? "#f87171" : "#71717a";
+
+    return { pathD: d, marker: markerPoint, lineColor };
+  }, [smoothed, entryPrice, entryTime, result, roundActive]);
+
+  const bgTint = useMemo(() => {
+    if (!roundActive) return null;
+    if (
+      entryPrice != null &&
+      direction != null &&
+      currentPrice != null
+    ) {
+      const winning =
+        (direction === "up" && currentPrice > entryPrice) ||
+        (direction === "down" && currentPrice < entryPrice);
+      const losing =
+        (direction === "up" && currentPrice < entryPrice) ||
+        (direction === "down" && currentPrice > entryPrice);
+      if (winning) return "win";
+      if (losing) return "lose";
+    }
+    return null;
+  }, [roundActive, entryPrice, direction, currentPrice]);
+
+  if (smoothed.length < 2) {
+    return (
+      <div
+        className="flex shrink items-center justify-center rounded-lg transition-colors duration-200"
+        style={{
+          width: MINI_CHART_WIDTH,
+          height: MINI_CHART_HEIGHT,
+          backgroundColor:
+            bgTint === "win"
+              ? "rgba(52, 211, 153, 0.08)"
+              : bgTint === "lose"
+                ? "rgba(248, 113, 113, 0.08)"
+                : "transparent",
+        }}
+      >
+        <span className="text-[10px] text-zinc-500">—</span>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="relative flex shrink-0 items-center justify-center overflow-hidden rounded-lg transition-colors duration-200"
+      style={{
+        width: MINI_CHART_WIDTH,
+        height: MINI_CHART_HEIGHT,
+        backgroundColor:
+          bgTint === "win"
+            ? "rgba(52, 211, 153, 0.08)"
+            : bgTint === "lose"
+              ? "rgba(248, 113, 113, 0.08)"
+              : "transparent",
+      }}
+    >
+      <svg
+        width={MINI_CHART_WIDTH}
+        height={MINI_CHART_HEIGHT}
+        className="overflow-visible"
+      >
+        <path
+          d={pathD}
+          fill="none"
+          stroke={lineColor}
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        {marker && (
+          <circle
+            cx={marker.x}
+            cy={marker.y}
+            r="4"
+            fill="rgba(0,0,0,0.5)"
+            stroke="#eab308"
+            strokeWidth="1.5"
+          />
+        )}
+      </svg>
+      {/* Edge fades to blend into panel */}
+      <div
+        className="pointer-events-none absolute inset-y-0 left-0 w-[10%]"
+        style={{
+          background: `linear-gradient(to right, ${BG_NEAR_BLACK}, transparent)`,
+        }}
+      />
+      <div
+        className="pointer-events-none absolute inset-y-0 right-0 w-[10%]"
+        style={{
+          background: `linear-gradient(to left, ${BG_NEAR_BLACK}, transparent)`,
+        }}
+      />
+      <div
+        className="pointer-events-none absolute inset-x-0 top-0 h-[20%]"
+        style={{
+          background: `linear-gradient(to bottom, ${BG_NEAR_BLACK}, transparent)`,
+        }}
+      />
+      <div
+        className="pointer-events-none absolute inset-x-0 bottom-0 h-[20%]"
+        style={{
+          background: `linear-gradient(to top, ${BG_NEAR_BLACK}, transparent)`,
+        }}
+      />
+    </div>
+  );
+}
 
 interface RoundState {
   direction: Direction | null;
@@ -92,12 +316,58 @@ export function BinaryGame() {
     return () => controls.stop();
   }, [currentPotentialPayout]);
 
-  // When not in a streak, current payout is 0
+  const prevIsStreakActiveRef = useRef(isStreakActive);
+
+  // When we transition from streak to no-streak, clear payout (don't clear on mount so restore can apply first)
   useEffect(() => {
-    if (!isStreakActive) {
+    const wasActive = prevIsStreakActiveRef.current;
+    prevIsStreakActiveRef.current = isStreakActive;
+    if (wasActive && !isStreakActive) {
       setCurrentPotentialPayout(0);
     }
   }, [isStreakActive]);
+
+  // Load persisted streak state on mount (runs once; restore must not be overwritten by the effect above)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const stored = window.localStorage.getItem(STREAK_STORAGE_KEY);
+      if (!stored) return;
+      const parsed = JSON.parse(stored) as {
+        isStreakActive?: boolean;
+        currentStreakCount?: number;
+        currentPotentialPayout?: number;
+        pendingDecision?: boolean;
+      };
+      if (
+        parsed &&
+        parsed.isStreakActive &&
+        typeof parsed.currentStreakCount === "number" &&
+        parsed.currentStreakCount > 0 &&
+        typeof parsed.currentPotentialPayout === "number" &&
+        parsed.currentPotentialPayout > 0
+      ) {
+        setIsStreakActive(true);
+        setCurrentStreakCount(parsed.currentStreakCount);
+        setCurrentPotentialPayout(parsed.currentPotentialPayout);
+        // ensure UI immediately shows the restored payout
+        setPayoutDisplay(parsed.currentPotentialPayout);
+        if (parsed.pendingDecision) {
+          // Bring user back to the Cash Out vs Let It Ride decision state
+          setRound((prev) => ({
+            ...prev,
+            direction: null,
+            startPrice: null,
+            endPrice: null,
+            result: "win",
+            endsAt: null,
+          }));
+        }
+      }
+    } catch {
+      // ignore malformed storage
+    }
+  }, []);
 
   // Countdown timer
   useEffect(() => {
@@ -150,7 +420,8 @@ export function BinaryGame() {
           ? "lose"
           : "push";
     } else {
-      result = "push";
+      // Flat round: treat as loss
+      result = "lose";
     }
 
     const stake = stakeForCurrentRound;
@@ -180,15 +451,6 @@ export function BinaryGame() {
       setCurrentPotentialPayout(0);
       setLastWinAmount(null);
       setAutoCapped(false);
-    } else {
-      // push -> refund stake, reset streak state but without loss animation
-      add(stake);
-      setIsStreakActive(false);
-      setCurrentStreakCount(0);
-      setCurrentPotentialPayout(0);
-      setLastWinAmount(null);
-      setLastLossAmount(null);
-      setAutoCapped(false);
     }
 
     setRound((prev) => ({
@@ -215,7 +477,7 @@ export function BinaryGame() {
     stakeForCurrentRound,
   ]);
 
-  // Auto-hide win / lose status after 3 seconds
+  // Auto-hide compact win / lose toasts after 3 seconds
   useEffect(() => {
     if (round.result === "win" || round.result === "lose") {
       setShowResultBanner(true);
@@ -224,6 +486,22 @@ export function BinaryGame() {
     }
     setShowResultBanner(false);
   }, [round.result]);
+
+  // Persist streak state so it survives navigation / refresh
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const payload = {
+        isStreakActive,
+        currentStreakCount,
+        currentPotentialPayout,
+        pendingDecision: round.result === "win" && isStreakActive,
+      };
+      window.localStorage.setItem(STREAK_STORAGE_KEY, JSON.stringify(payload));
+    } catch {
+      // ignore storage errors
+    }
+  }, [isStreakActive, currentStreakCount, currentPotentialPayout, round.result]);
 
   const handlePlaceBet = (direction: Direction) => {
     if (!canPlaceNewRound || price == null) return;
@@ -344,12 +622,12 @@ export function BinaryGame() {
         borderColor: BORDER_COLOR,
       }}
     >
-      {/* Top: Title + live price */}
+      {/* Top: Title | chart (center) | BTC price (right) */}
       <div
-        className="flex items-center justify-between border-b px-4 py-3"
+        className="flex items-center border-b px-4 py-3"
         style={{ borderColor: BORDER_COLOR }}
       >
-        <div className="space-y-1">
+        <div className="space-y-1 shrink-0">
           <h2 className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-400">
             Game 02 · Chain Reaction
           </h2>
@@ -357,7 +635,26 @@ export function BinaryGame() {
             10s BTC Up / Down with streak-based compounding.
           </p>
         </div>
-        <div className="flex flex-col items-end gap-1">
+
+        {/* Mini BTC chart in the middle */}
+        <div className="flex flex-1 min-w-0 justify-center px-4">
+          <MiniChartPreview
+            priceTimeHistory={priceTimeHistory}
+            entryPrice={round.startPrice}
+            entryTime={round.endsAt != null ? round.endsAt - ROUND_DURATION_MS : null}
+            result={round.result}
+            currentPrice={price}
+            direction={round.direction}
+            roundActive={
+              round.endsAt != null &&
+              round.result === null &&
+              remainingSeconds !== null &&
+              remainingSeconds > 0
+            }
+          />
+        </div>
+
+        <div className="flex flex-col items-end gap-1 shrink-0">
           <div className="flex items-center gap-2">
             <span className="text-[11px] font-medium uppercase tracking-[0.16em] text-zinc-500">
               BTC · USD
@@ -710,133 +1007,93 @@ export function BinaryGame() {
 
             {/* Action center */}
             <div className="flex flex-1 flex-col gap-2">
-              {round.result === "win" && isStreakActive ? (
-                // CASH OUT vs LET IT RIDE
-                <motion.div
-                  layout
-                  className="flex w-full flex-col gap-2"
+              {/* UP / DOWN buttons (always available; decisions handled in popup) */}
+              <motion.div
+                layout
+                className="flex w-full flex-col gap-2"
+              >
+                <motion.button
+                  type="button"
+                  whileTap={{ scale: 0.98 }}
+                  whileHover={
+                    upDisabled
+                      ? {}
+                      : {
+                          scale: 1.02,
+                          boxShadow: "0 0 20px rgba(59,130,246,0.55)",
+                        }
+                  }
+                  disabled={upDisabled}
+                  onClick={() => handlePlaceBet("up")}
+                  className={`flex items-center justify-center gap-2 rounded-full border px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] ${
+                    upDisabled
+                      ? "cursor-not-allowed border-zinc-800 bg-zinc-900 text-zinc-600"
+                      : "border-[rgba(59,130,246,0.6)] bg-[rgba(59,130,246,0.12)] text-zinc-50"
+                  }`}
                 >
-                  <motion.button
-                    type="button"
-                    whileTap={{ scale: 0.98 }}
-                    whileHover={{
-                      scale: 1.02,
-                      boxShadow: "0 0 22px rgba(148,163,184,0.55)",
-                    }}
-                    onClick={handleCashOut}
-                    className="flex items-center justify-center gap-2 rounded-full bg-zinc-50 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-900"
+                  <span
+                    className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-[rgba(59,130,246,0.6)]"
+                    style={{ color: UP_COLOR }}
                   >
-                    <span>Cash out</span>
-                  </motion.button>
-                  <motion.button
-                    type="button"
-                    whileTap={{ scale: 0.98 }}
-                    whileHover={{
-                      scale: !isAtCap ? 1.02 : 1,
-                      boxShadow: !isAtCap
-                        ? "0 0 22px rgba(59,130,246,0.55)"
-                        : "none",
-                    }}
-                    onClick={handleLetItRide}
-                    disabled={isAtCap}
-                    className={`flex items-center justify-center gap-2 rounded-full border px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] ${
-                      isAtCap
-                        ? "cursor-not-allowed border-zinc-700 bg-zinc-900 text-zinc-500"
-                        : "border-sky-500/80 bg-sky-500/10 text-sky-300"
-                    }`}
-                  >
-                    <span>Let it ride</span>
-                  </motion.button>
-                </motion.div>
-              ) : (
-                // UP / DOWN buttons
-                <motion.div
-                  layout
-                  className="flex w-full flex-col gap-2"
-                >
-                  <motion.button
-                    type="button"
-                    whileTap={{ scale: 0.98 }}
-                    whileHover={
-                      upDisabled
-                        ? {}
-                        : {
-                            scale: 1.02,
-                            boxShadow: "0 0 20px rgba(59,130,246,0.55)",
-                          }
-                    }
-                    disabled={upDisabled}
-                    onClick={() => handlePlaceBet("up")}
-                    className={`flex items-center justify-center gap-2 rounded-full border px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] ${
-                      upDisabled
-                        ? "cursor-not-allowed border-zinc-800 bg-zinc-900 text-zinc-600"
-                        : "border-[rgba(59,130,246,0.6)] bg-[rgba(59,130,246,0.12)] text-zinc-50"
-                    }`}
-                  >
-                    <span
-                      className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-[rgba(59,130,246,0.6)]"
-                      style={{ color: UP_COLOR }}
+                    <svg
+                      viewBox="0 0 16 16"
+                      className="h-3 w-3"
+                      aria-hidden="true"
                     >
-                      <svg
-                        viewBox="0 0 16 16"
-                        className="h-3 w-3"
-                        aria-hidden="true"
-                      >
-                        <path
-                          d="M3.5 9.5 8 5l4.5 4.5"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="1.5"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    </span>
-                    <span>Up in 10s</span>
-                  </motion.button>
+                      <path
+                        d="M3.5 9.5 8 5l4.5 4.5"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </span>
+                  <span>Up in 10s</span>
+                </motion.button>
 
-                  <motion.button
-                    type="button"
-                    whileTap={{ scale: 0.98 }}
-                    whileHover={
-                      downDisabled
-                        ? {}
-                        : {
-                            scale: 1.02,
-                            boxShadow: "0 0 20px rgba(249,115,22,0.55)",
-                          }
-                    }
-                    disabled={downDisabled}
-                    onClick={() => handlePlaceBet("down")}
-                    className={`flex items-center justify-center gap-2 rounded-full border px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] ${
-                      downDisabled
-                        ? "cursor-not-allowed border-zinc-800 bg-zinc-900 text-zinc-600"
-                        : "border-[rgba(249,115,22,0.7)] bg-[rgba(249,115,22,0.14)] text-zinc-50"
-                    }`}
+                <motion.button
+                  type="button"
+                  whileTap={{ scale: 0.98 }}
+                  whileHover={
+                    downDisabled
+                      ? {}
+                      : {
+                          scale: 1.02,
+                          boxShadow: "0 0 20px rgba(249,115,22,0.55)",
+                        }
+                  }
+                  disabled={downDisabled}
+                  onClick={() => handlePlaceBet("down")}
+                  className={`flex items-center justify-center gap-2 rounded-full border px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] ${
+                    downDisabled
+                      ? "cursor-not-allowed border-zinc-800 bg-zinc-900 text-zinc-600"
+                      : "border-[rgba(249,115,22,0.7)] bg-[rgba(249,115,22,0.14)] text-zinc-50"
+                  }`}
+                >
+                  <span
+                    className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-[rgba(249,115,22,0.7)]"
+                    style={{ color: DOWN_COLOR }}
                   >
-                    <span
-                      className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-[rgba(249,115,22,0.7)]"
-                      style={{ color: DOWN_COLOR }}
+                    <svg
+                      viewBox="0 0 16 16"
+                      className="h-3 w-3"
+                      aria-hidden="true"
                     >
-                      <svg
-                        viewBox="0 0 16 16"
-                        className="h-3 w-3"
-                        aria-hidden="true"
-                      >
-                        <path
-                          d="M3.5 6.5 8 11l4.5-4.5"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="1.5"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    </span>
-                    <span>Down in 10s</span>
-                  </motion.button>
-                </motion.div>
-              )}
+                      <path
+                        d="M3.5 6.5 8 11l4.5-4.5"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </span>
+                  <span>Down in 10s</span>
+                </motion.button>
+              </motion.div>
 
               {/* Helper text */}
               <div className="mt-1 flex items-center justify-between text-[10px] text-zinc-500">
@@ -866,63 +1123,155 @@ export function BinaryGame() {
         </div>
       </div>
 
-      {/* Full-card win / lose overlay */}
+      {/* Full-card win / lose decision popup */}
       <AnimatePresence>
-        {showResultBanner && round.result === "win" && (
+        {(round.result === "win" && isStreakActive) || round.result === "lose" ? (
           <motion.div
-            key="win-overlay"
+            key="result-popup"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.25 }}
-            className="pointer-events-none absolute inset-0 flex items-center justify-center"
+            transition={{ duration: 0.2 }}
+            className="absolute inset-0 z-20 flex items-center justify-center bg-black/40 backdrop-blur-sm"
           >
             <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
+              initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              transition={{ type: "spring", stiffness: 220, damping: 18 }}
-              className="rounded-3xl border border-emerald-500/60 bg-emerald-500/10 px-6 py-4 text-center shadow-[0_0_40px_rgba(16,185,129,0.7)] backdrop-blur-md"
+              exit={{ scale: 0.95, opacity: 0 }}
+              transition={{ type: "spring", stiffness: 260, damping: 22 }}
+              className="w-full max-w-sm rounded-2xl border border-[var(--border)] bg-[#050711]/95 p-4 text-xs text-zinc-200 shadow-2xl"
             >
-              <div className="text-[10px] font-semibold uppercase tracking-[0.25em] text-emerald-300">
-                Streak win
+              <div className="mb-3 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`h-2 w-2 rounded-full ${
+                      round.result === "win"
+                        ? "bg-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.8)]"
+                        : "bg-rose-400 shadow-[0_0_8px_rgba(248,113,113,0.8)]"
+                    }`}
+                  />
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-400">
+                    {round.result === "win" ? "Streak result · win" : "Streak result · loss"}
+                  </span>
+                </div>
+                <span className="font-mono text-[10px] text-zinc-500">
+                  Last round summary
+                </span>
               </div>
-              <div className="mt-1 text-2xl font-semibold text-emerald-100">
-                +
-                {lastWinAmount?.toLocaleString("en-US", {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })}{" "}
-                USDC (unlocked)
+
+              <div className="space-y-1.5 rounded-xl border border-[var(--border)]/70 bg-black/40 p-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-zinc-500">Entry price</span>
+                  <span className="font-mono text-[11px] tabular-nums text-zinc-100">
+                    {round.startPrice != null
+                      ? `$${round.startPrice.toLocaleString("en-US", {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}`
+                      : "—"}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-zinc-500">Settle price</span>
+                  <span className="font-mono text-[11px] tabular-nums text-zinc-100">
+                    {round.endPrice != null
+                      ? `$${round.endPrice.toLocaleString("en-US", {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}`
+                      : "—"}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-zinc-500">Direction</span>
+                  <span className="font-mono text-[11px] tabular-nums text-zinc-100">
+                    {round.direction === "up"
+                      ? "Up"
+                      : round.direction === "down"
+                      ? "Down"
+                      : "—"}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-zinc-500">Streak</span>
+                  <span className="font-mono text-[11px] tabular-nums text-zinc-100">
+                    {round.result === "win"
+                      ? `${currentStreakCount} win${currentStreakCount !== 1 ? "s" : ""}`
+                      : "0 (reset)"}
+                  </span>
+                </div>
+                <div
+                  className={
+                    round.result === "win"
+                      ? "rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3"
+                      : ""
+                  }
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-zinc-500">
+                      {round.result === "win" ? "Current payout" : "Lost this round"}
+                    </span>
+                    {round.result === "win" ? (
+                      <span className="font-mono text-lg font-bold tabular-nums text-emerald-400">
+                        ${currentPotentialPayout.toLocaleString("en-US", {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </span>
+                    ) : (
+                      <span className="font-mono text-[11px] tabular-nums text-zinc-100">
+                        ${baseStake.toLocaleString("en-US", {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </span>
+                    )}
+                  </div>
+                </div>
               </div>
+
+              {round.result === "win" && isStreakActive ? (
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={handleCashOut}
+                    className="flex items-center justify-center gap-2 rounded-full bg-zinc-50 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-900 transition hover:brightness-110"
+                  >
+                    Cash out
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleLetItRide}
+                    disabled={isAtCap}
+                    className={`flex items-center justify-center gap-2 rounded-full border px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] transition ${
+                      isAtCap
+                        ? "cursor-not-allowed border-zinc-700 bg-zinc-900 text-zinc-500"
+                        : "border-sky-500/80 bg-sky-500/10 text-sky-300 hover:border-sky-400"
+                    }`}
+                  >
+                    Let it ride
+                  </button>
+                </div>
+              ) : (
+                <div className="mt-3 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // Just dismiss popup; user can choose stake / direction again
+                      setRound((prev) => ({
+                        ...prev,
+                        result: null,
+                      }));
+                    }}
+                    className="rounded-full border border-zinc-700 px-3 py-1.5 text-[11px] font-medium text-zinc-300 hover:border-zinc-500"
+                  >
+                    Close
+                  </button>
+                </div>
+              )}
             </motion.div>
           </motion.div>
-        )}
-        {showResultBanner && round.result === "lose" && (
-          <motion.div
-            key="lose-overlay"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.25 }}
-            className="pointer-events-none absolute inset-0 flex items-center justify-center"
-          >
-            <motion.div
-              initial={{ scale: 1, opacity: 1 }}
-              animate={{ scale: 1.05, opacity: 0.9 }}
-              exit={{ scale: 0.96, opacity: 0 }}
-              transition={{ duration: 0.35, ease: 'easeOut' }}
-              className="rounded-3xl border border-rose-500/60 bg-rose-500/10 px-6 py-4 text-center shadow-[0_0_40px_rgba(248,113,113,0.6)] backdrop-blur-md"
-            >
-              <div className="text-[10px] font-semibold uppercase tracking-[0.25em] text-rose-300">
-                Streak lost
-              </div>
-              <div className="mt-1 text-2xl font-semibold text-rose-100">
-                Chain broken
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
+        ) : null}
       </AnimatePresence>
     </motion.div>
   );
