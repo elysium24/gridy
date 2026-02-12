@@ -18,7 +18,7 @@ export function PriceFeedStatus() {
           }`}
         />
         <span className="text-[var(--muted)]">
-          {isConnected ? "Live" : "Connecting…"}
+          {isConnected ? "BTC Price" : "Connecting…"}
         </span>
         {error && <span className="text-[var(--neon-red)]">{error}</span>}
       </div>

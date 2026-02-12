@@ -13,7 +13,6 @@ export function Header() {
     <header className="flex shrink-0 flex-wrap items-center justify-between gap-4 border-b border-[var(--border)] px-4 py-3 md:px-6">
       <div>
         <h1 className="text-xl font-bold text-[var(--foreground)]">Gridy</h1>
-        <p className="text-xs text-[var(--muted)]">Bitcoin Grid Betting</p>
       </div>
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-4 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 font-mono text-sm">
