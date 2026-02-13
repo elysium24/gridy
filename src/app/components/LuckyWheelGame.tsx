@@ -98,6 +98,14 @@ export function LuckyWheelGame() {
     setWinner,
   } = wheelRoom;
 
+  /** Try to become host first; if room is taken, join as peer. Avoids "Connecting to host..." when no one is there (e.g. first visitor on deploy). */
+  const tryCreateOrJoin = useCallback(
+    (id: string) => {
+      createRoom(id, () => joinRoom(id));
+    },
+    [createRoom, joinRoom]
+  );
+
   const { phase, phaseSecondsLeft, roundSecond, roundId } =
     useGlobalRoundSync(100);
   const searchParams = useSearchParams();
@@ -122,12 +130,9 @@ export function LuckyWheelGame() {
     if (hasAutoJoined.current || role !== null) return;
     hasAutoJoined.current = true;
     const room = searchParams.get("room")?.trim().toUpperCase();
-    if (room && room.length >= 4) {
-      joinRoom(room);
-    } else {
-      joinRoom(DEFAULT_WHEEL_ROOM_ID);
-    }
-  }, [searchParams, joinRoom, role]);
+    const id = room && room.length >= 4 ? room : DEFAULT_WHEEL_ROOM_ID;
+    tryCreateOrJoin(id);
+  }, [searchParams, tryCreateOrJoin, role]);
 
   const [selectedStake, setSelectedStake] = useState(10);
   const [committedBet, setCommittedBet] = useState(0);
