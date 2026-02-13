@@ -65,3 +65,36 @@ body {
 .wallet-adapter-modal-button-close:hover {
   background: var(--muted) !important;
 }
+
+/* Wheel leaderboard: vertical scroll, scrollbar hidden by default; allow horizontal scroll if needed */
+.wheel-leaderboard-scroll {
+  overflow-x: auto;
+  overflow-y: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.wheel-leaderboard-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* Show styled scrollbar when many rows (20+) */
+.wheel-leaderboard-scroll.show-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #3f3f46 #18181b;
+  scrollbar-gutter: stable;
+}
+.wheel-leaderboard-scroll.show-scrollbar::-webkit-scrollbar {
+  display: block;
+  width: 6px;
+}
+.wheel-leaderboard-scroll.show-scrollbar::-webkit-scrollbar-track {
+  background: #18181b;
+  border-radius: 3px;
+}
+.wheel-leaderboard-scroll.show-scrollbar::-webkit-scrollbar-thumb {
+  background: #3f3f46;
+  border-radius: 3px;
+}
+.wheel-leaderboard-scroll.show-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #52525b;
+}

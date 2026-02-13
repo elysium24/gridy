@@ -135,60 +135,60 @@ export default function Home() {
                   </div>
                 </Link>
 
-                {/* Game 03 placeholder */}
-                <div className="flex flex-col overflow-hidden rounded-xl border border-dashed border-[var(--border)]/80 bg-[var(--background)]/60 text-[var(--muted)]">
+                <Link
+                  href="/games/global-wheel"
+                  className="group flex flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--background)]/80 transition hover:border-amber-400 hover:shadow-[0_0_20px_rgba(245,158,11,0.25)]"
+                >
                   <div
-                    className="h-20 w-full shrink-0 rounded-t-xl bg-gradient-to-b from-zinc-600/20 via-zinc-600/8 to-transparent"
+                    className="h-20 w-full shrink-0 rounded-t-xl bg-gradient-to-b from-amber-500/25 via-amber-500/10 to-transparent"
                     style={{
                       backgroundImage:
-                        "linear-gradient(to bottom, rgba(82, 82, 91, 0.18), rgba(82, 82, 91, 0.05), transparent), radial-gradient(circle at 50% 30%, rgba(113, 113, 122, 0.1) 0%, transparent 50%)",
+                        "linear-gradient(to bottom, rgba(245, 158, 11, 0.2), rgba(245, 158, 11, 0.06), transparent), radial-gradient(circle at 50% 30%, rgba(245, 158, 11, 0.15) 0%, transparent 50%)",
                     }}
                     aria-hidden
                   />
                   <div className="flex flex-1 flex-col justify-between px-4 pb-4 pt-2">
                     <div>
-                      <div className="mb-1 text-[0.7rem] font-semibold uppercase tracking-[0.22em]">
+                      <div className="mb-1 text-[0.7rem] font-semibold uppercase tracking-[0.22em] text-[var(--muted)]">
                         Game 03
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-zinc-800 text-zinc-300 ring-1 ring-zinc-600/60">
+                        <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-amber-500/10 text-amber-300 ring-1 ring-amber-500/30">
                           <svg
                             viewBox="0 0 24 24"
                             className="h-3.5 w-3.5"
                             aria-hidden="true"
                           >
-                            <rect
-                              x="5"
-                              y="6"
-                              width="6"
-                              height="6"
-                              className="fill-zinc-700 stroke-zinc-400"
-                              rx="1.2"
+                            <circle
+                              cx="12"
+                              cy="12"
+                              r="9"
+                              className="fill-none stroke-amber-400"
+                              strokeWidth="1.5"
                             />
-                            <rect
-                              x="13"
-                              y="12"
-                              width="6"
-                              height="6"
-                              className="fill-zinc-800 stroke-zinc-500"
-                              rx="1.2"
+                            <path
+                              d="M12 3v2M12 19v2M3 12h2M19 12h2M5.64 5.64l1.42 1.42M16.94 16.94l1.42 1.42M5.64 18.36l1.42-1.42M16.94 7.06l1.42-1.42"
+                              className="stroke-amber-300"
+                              strokeWidth="1.2"
                             />
                           </svg>
                         </span>
                         <h3 className="text-sm font-semibold text-[var(--foreground)]">
-                          Coming soon
+                          The Global Wheel
                         </h3>
                       </div>
-                      <p className="mt-1 text-xs">
-                        A new high-volatility game mode will appear here once it&apos;s
-                        ready.
+                      <p className="mt-1 text-xs text-[var(--muted)]">
+                        60s global rounds. Deposit USDC for your slice; winner takes 95% of the pool.
                       </p>
                     </div>
-                    <div className="mt-3 text-xs">
-                      Stay tuned for more Gridy experiments.
+                    <div className="mt-3 flex items-center justify-between text-xs text-[var(--muted)]">
+                      <span>Multiplayer pari-mutuel</span>
+                      <span className="rounded-full border border-[var(--border)] bg-[var(--panel)]/80 px-2 py-0.5 text-[0.65rem] font-medium text-[var(--muted)] group-hover:border-amber-400 group-hover:bg-amber-500/10 group-hover:text-amber-300">
+                        Play
+                      </span>
                     </div>
                   </div>
-                </div>
+                </Link>
               </div>
             </section>
           </div>
