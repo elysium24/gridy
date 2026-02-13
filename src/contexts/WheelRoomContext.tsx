@@ -240,6 +240,8 @@ export function WheelRoomProvider({ children }: { children: React.ReactNode }) {
     hostConnRef.current = null;
     peerConnectionsRef.current = new Map();
 
+    const state = { tryBecomeHost: null as (() => void) | null };
+
     p.on("open", () => {
       setMyPeerId(p.id ?? null);
       const conn = p.connect(id);
@@ -248,6 +250,7 @@ export function WheelRoomProvider({ children }: { children: React.ReactNode }) {
       const tryBecomeHost = () => {
         if (fallbackDone) return;
         fallbackDone = true;
+        state.tryBecomeHost = null;
         try {
           clearTimeout(timer);
         } catch {
@@ -256,7 +259,8 @@ export function WheelRoomProvider({ children }: { children: React.ReactNode }) {
         p.destroy();
         createRoom(id, () => joinRoom(id));
       };
-      const timer = setTimeout(tryBecomeHost, 12000);
+      state.tryBecomeHost = tryBecomeHost;
+      const timer = setTimeout(tryBecomeHost, 4000);
       let hostAliveTimer: ReturnType<typeof setTimeout> | null = null;
       let hostHeartbeatInterval: ReturnType<typeof setInterval> | null = null;
       let hostResponded = false;
@@ -472,6 +476,9 @@ export function WheelRoomProvider({ children }: { children: React.ReactNode }) {
           });
         }
       });
+      conn.on("error", () => {
+        if (!hostResponded && state.tryBecomeHost) state.tryBecomeHost();
+      });
       conn.on("close", () => {
         setConnected(false);
         if (hostHeartbeatInterval != null) {
@@ -487,7 +494,12 @@ export function WheelRoomProvider({ children }: { children: React.ReactNode }) {
         runPeerMigrationDelayed();
       });
     });
-    p.on("error", () => setConnected(false));
+    p.on("error", () => {
+      setConnected(false);
+      if (state.tryBecomeHost) {
+        state.tryBecomeHost();
+      }
+    });
 
     p.on("connection", (incomingConn: DataConnection) => {
       incomingConn.on("open", () => {
