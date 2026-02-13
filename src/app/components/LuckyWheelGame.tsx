@@ -91,6 +91,7 @@ export function LuckyWheelGame() {
     setNetworkBets,
     createRoom,
     joinRoom,
+    leaveRoom,
     placeBetToHost,
     notifyPeerWon,
     winnerId,
@@ -105,6 +106,21 @@ export function LuckyWheelGame() {
     },
     [createRoom, joinRoom]
   );
+
+  /** If stuck as peer not connected (e.g. create failed then join to nobody), retry become host after 6s. */
+  const stuckRetryCountRef = useRef(0);
+  useEffect(() => {
+    if (connected) stuckRetryCountRef.current = 0;
+  }, [connected]);
+  useEffect(() => {
+    if (role !== "peer" || connected || !roomId || stuckRetryCountRef.current >= 2) return;
+    const t = setTimeout(() => {
+      stuckRetryCountRef.current += 1;
+      leaveRoom();
+      tryCreateOrJoin(roomId);
+    }, 6000);
+    return () => clearTimeout(t);
+  }, [role, connected, roomId, leaveRoom, tryCreateOrJoin]);
 
   const { phase, phaseSecondsLeft, roundSecond, roundId } =
     useGlobalRoundSync(100);
