@@ -231,7 +231,7 @@ export function WheelRoomProvider({ children }: { children: React.ReactNode }) {
 
   const joinRoom = useCallback(async (id: string) => {
     const { default: Peer } = await import("peerjs");
-    const p = new Peer(undefined, { host: "0.peerjs.com", secure: true, port: 443 });
+    const p = new Peer(undefined as unknown as string, { host: "0.peerjs.com", secure: true, port: 443 });
     peerRef.current = p;
     setPeer(p);
     setRole("peer");
